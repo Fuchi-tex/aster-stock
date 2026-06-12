@@ -24,7 +24,7 @@
         <label class="block text-sm font-medium text-gray-700 mb-1">請輸入貨號或系列號</label>
         <input type="text" id="itemCodeInput" placeholder="例如：A27911 C1001 或 A279" 
                class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 text-lg focus:outline-none">
-        <p class="text-xs text-gray-400 mt-1">※ 支援多貨號及輸入前4碼系列號搜尋</p>
+        <p class="text-xs text-gray-400 mt-1">※ 支援多貨號(A/C)及輸入前4碼系列號搜尋</p>
       </div>
       <button id="queryBtn" onclick="startQuery()" class="w-full bg-emerald-600 text-white font-medium py-3 px-4 rounded-xl shadow-md hover:bg-emerald-700 active:scale-98 transition">
         開始查詢庫存
@@ -66,26 +66,45 @@
 
       if (!inputVal) return alert('請先輸入貨號！');
       if (!cachedInventoryData) return alert('系統資料正在準備中，請稍候...');
-
-      resultArea.classList.remove('hidden');
-      resultList.innerHTML = '';
-
+      
+      // 拆分多個輸入單詞
       const rawTokens = inputVal.split(/\s+/);
       const matchedItems = []; 
       const missedCodes = [];  
       const loggedCodes = [];  
+      let hasError = false;
 
+      // 🛑 1. 檢查所有輸入單詞的第一碼是否合法
+      for (let i = 0; i < rawTokens.length; i++) {
+        let token = rawTokens[i];
+        if (!token) continue;
+        
+        let firstChar = token.charAt(0).toUpperCase();
+        if (firstChar !== 'A' && firstChar !== 'C') {
+          alert(`❌ 錯誤：輸入的「${token}」不合法。\n貨號或系列號的第一碼必須是 A 或 C！`);
+          hasError = true;
+          break; // 跳出循環
+        }
+      }
+
+      // 如果有任何一筆不合法，立刻中斷整次查詢，不顯示任何結果
+      if (hasError) return;
+
+      // 顯示查詢結果區塊
+      resultArea.classList.remove('hidden');
+      resultList.innerHTML = '';
+
+      // 🔄 2. 開始進行資料比對
       rawTokens.forEach(token => {
         if (!token) return;
         let query = token.toUpperCase();
-        loggedCodes.push(query);
 
-        if (query.includes('*')) {
-          let prefix = query.replace(/\*/g, ''); 
-          if(prefix.length < 2) {
-            alert('為了系統效能，模糊查詢請至少輸入2個字以上（例如: A1*）');
-            return;
-          }
+        // 💡 智慧判定：如果使用者輸入 2~4 碼且沒加 *，或者自己有加 * ➔ 自動視為模糊查詢
+        if ((query.length >= 2 && query.length <= 4) || query.includes('*')) {
+          let prefix = query.replace(/\*/g, ''); // 去除可能存在的星號
+          
+          loggedCodes.push(prefix + '*'); // 傳回試算表記錄自動補上 * 號
+          
           let foundAny = false;
           for (let code in cachedInventoryData) {
             if (code.startsWith(prefix)) {
@@ -93,19 +112,11 @@
               foundAny = true;
             }
           }
-          if (!foundAny) missedCodes.push(token);
+          if (!foundAny) missedCodes.push(token + '*');
         } 
-        else if (query.length === 4) {
-          let foundAny = false;
-          for (let code in cachedInventoryData) {
-            if (code.startsWith(query)) {
-              matchedItems.push(cachedInventoryData[code]);
-              foundAny = true;
-            }
-          }
-          if (!foundAny) missedCodes.push(token);
-        } 
+        // 精準查詢（5碼以上）
         else {
+          loggedCodes.push(query);
           if (cachedInventoryData[query]) {
             matchedItems.push(cachedInventoryData[query]);
           } else {
@@ -114,9 +125,11 @@
         }
       });
 
+      // 去除重複的貨號物件
       const uniqueMatchedItems = Array.from(new Set(matchedItems.map(a => a.itemCode)))
         .map(id => matchedItems.find(a => a.itemCode === id));
 
+      // 渲染畫面：有庫存
       uniqueMatchedItems.forEach(item => {
         let html = `
           <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-1.5 shadow-sm">
@@ -127,6 +140,7 @@
         resultList.insertAdjacentHTML('beforeend', html);
       });
 
+      // 渲染畫面：查無庫存
       missedCodes.forEach(code => {
         let html = `
           <div class="bg-red-50 border border-red-200 rounded-xl p-4 shadow-sm">
@@ -140,6 +154,7 @@
         resultList.innerHTML = '<p class="text-sm text-gray-500">請輸入有效的貨號格式。</p>';
       }
 
+      // 🔄 背景回傳查詢紀錄到 Google 試算表
       if (loggedCodes.length > 0) {
         fetch(GAS_API_URL, {
           method: 'POST',
